@@ -175,11 +175,18 @@ case class AxiLite4R(config: AxiLite4Config) extends Bundle {
 }
 
 
+/** Common ancestor of every AxiLite4 flavour, so that they can be mixed in a single collection
+  * (used by [[AxiLite4CrossbarFactory]]). Mirrors `spinal.lib.bus.amba4.axi.Axi4Bus`.
+  */
+trait AxiLite4Bus {
+  def config : AxiLite4Config
+}
+
 /**
   * Axi Lite interface definition
   * @param config Axi Lite configuration class
   */
-case class AxiLite4(config: AxiLite4Config) extends Bundle with IMasterSlave {
+case class AxiLite4(config: AxiLite4Config) extends Bundle with IMasterSlave with AxiLite4Bus {
 
   val aw = Stream(AxiLite4Ax(config))
   val w  = Stream(AxiLite4W(config))
@@ -223,6 +230,33 @@ case class AxiLite4(config: AxiLite4Config) extends Bundle with IMasterSlave {
   }
 
   def <<(that: AxiLite4ReadOnly): Unit = that >> this
+
+  /** Get a read only view of this bus, driven by its ar/r channels.
+    * @param idleOthers also tie off the write channels, when nothing else drives them
+    */
+  def toReadOnly(idleOthers: Boolean = false): AxiLite4ReadOnly = {
+    val ret = AxiLite4ReadOnly(config)
+    this >> ret
+    if(idleOthers){
+      this.writeCmd.setBlocked()
+      this.writeData.setBlocked()
+      this.writeRsp.setIdle()
+    }
+    ret
+  }
+
+  /** Get a write only view of this bus, driven by its aw/w/b channels.
+    * @param idleOthers also tie off the read channels, when nothing else drives them
+    */
+  def toWriteOnly(idleOthers: Boolean = false): AxiLite4WriteOnly = {
+    val ret = AxiLite4WriteOnly(config)
+    this >> ret
+    if(idleOthers){
+      this.readCmd.setBlocked()
+      this.readRsp.setIdle()
+    }
+    ret
+  }
 
   override def asMaster(): Unit = {
     master(aw,w)

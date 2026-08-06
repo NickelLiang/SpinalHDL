@@ -3,7 +3,7 @@ package spinal.lib.bus.amba4.axilite
 import spinal.core._
 import spinal.lib._
 
-case class AxiLite4ReadOnly(config: AxiLite4Config) extends Bundle with IMasterSlave {
+case class AxiLite4ReadOnly(config: AxiLite4Config) extends Bundle with IMasterSlave with AxiLite4Bus {
   val ar = Stream(AxiLite4Ax(config))
   val r  = Stream(AxiLite4R(config))
 
@@ -25,6 +25,14 @@ case class AxiLite4ReadOnly(config: AxiLite4Config) extends Bundle with IMasterS
   }
 
   def <<(that: AxiLite4ReadOnly): Unit = that >> this
+
+  /** Insert a `validPipe` on the ar channel, to cut the combinatorial path of a decoder/arbiter pair. */
+  def arValidPipe(): AxiLite4ReadOnly = {
+    val sink = AxiLite4ReadOnly(config)
+    sink.ar << this.ar.validPipe()
+    sink.r  >> this.r
+    sink
+  }
 
   override def asMaster(): Unit = {
     master(ar)
