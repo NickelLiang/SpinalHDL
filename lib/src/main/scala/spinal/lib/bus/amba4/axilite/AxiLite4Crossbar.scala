@@ -8,8 +8,6 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.Seq
 
-// Mirrors spinal.lib.bus.amba4.axi.Axi4Crossbar, without its Axi4Shared flavour.
-
 case class AxiLite4CrossbarSlaveConnection(master: AxiLite4Bus)
 
 case class AxiLite4CrossbarSlaveConfig(mapping: SizeMapping){

@@ -179,7 +179,7 @@ case class AxiLite4R(config: AxiLite4Config) extends Bundle {
   * (used by [[AxiLite4CrossbarFactory]]). Mirrors `spinal.lib.bus.amba4.axi.Axi4Bus`.
   */
 trait AxiLite4Bus {
-  def config : AxiLite4Config
+  def config: AxiLite4Config
 }
 
 /**

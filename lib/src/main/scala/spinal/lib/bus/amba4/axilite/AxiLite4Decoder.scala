@@ -4,8 +4,6 @@ import spinal.core._
 import spinal.lib._
 import spinal.lib.bus.misc.SizeMapping
 
-// Mirrors spinal.lib.bus.amba4.axi.Axi4Decoder, without the id, len, last, burst and size of AXI4.
-
 /**
   * Route the read transactions of one AxiLite4 master toward several slaves, depending on the
   * address. Addresses which are not covered by `decodings` are answered by an

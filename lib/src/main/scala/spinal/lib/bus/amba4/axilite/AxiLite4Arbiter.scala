@@ -3,20 +3,13 @@ package spinal.lib.bus.amba4.axilite
 import spinal.core._
 import spinal.lib._
 
-// Mirrors spinal.lib.bus.amba4.axi.Axi4Arbiter, with route FIFOs in place of its id extension.
-
 /**
-  * Share one AxiLite4 slave between several masters, using a round robin arbitration on the
-  * command channel.
+  * Share one AxiLite4 slave between several masters, with a round robin arbitration on ar.
   *
-  * The AXI4 arbiters route the responses back by extending the transaction ID with the index of
-  * the chosen master. AXI4-Lite has no ID, but for the same reason it also has a single implicit
-  * ID: a slave has to answer in the order it accepted the commands. So the arbitration decisions
-  * are pushed into a FIFO instead, and popped in the same order by the response channel.
-  *
-  * @note This is the whole correctness argument, and nothing checks it at run time: a slave which
-  *       answers out of the order it accepted the commands is not AXI4-Lite compliant, and would
-  *       have its responses silently delivered to the wrong master.
+  * Where the AXI4 arbiter extends the ID to route the responses back, AXI4-Lite has no ID and
+  * therefore a single implicit one: the slave answers in the order it accepted the commands, so a
+  * FIFO of the arbitration decisions routes r exactly. Nothing checks that at run time, and a slave
+  * which answers out of order would have its responses delivered to the wrong master.
   *
   * @param outputConfig    Axi Lite configuration class, shared by the inputs and the output
   * @param inputsCount     number of masters to arbitrate
@@ -50,16 +43,12 @@ case class AxiLite4ReadOnlyArbiter(outputConfig: AxiLite4Config,
 }
 
 /**
-  * Share one AxiLite4 slave between several masters, using a round robin arbitration on the
-  * command channel.
+  * Share one AxiLite4 slave between several masters, with a round robin arbitration on aw.
   *
-  * Two FIFOs of arbitration decisions are kept: one consumed by the w channel, so that the write
-  * data of two masters is never interleaved into the same slave, and one consumed by the b channel
-  * to route the responses back. See [[AxiLite4ReadOnlyArbiter]] about why a FIFO is enough, and
-  * about what a non compliant slave would break.
-  *
-  * @note A master which wins the arbitration on aw and then delays its w beat blocks the writes of
-  *       the other masters toward that slave, as the w channel has to stay bound to its aw.
+  * Two FIFOs of arbitration decisions, see [[AxiLite4ReadOnlyArbiter]] about why a FIFO is enough:
+  * one popped by w, which keeps the write data of two masters from interleaving into the same
+  * slave, and one popped by b. A master which delays its w beat therefore blocks the writes of the
+  * other masters toward that slave.
   *
   * @param outputConfig    Axi Lite configuration class, shared by the inputs and the output
   * @param inputsCount     number of masters to arbitrate
@@ -86,7 +75,7 @@ case class AxiLite4WriteOnlyArbiter(outputConfig: AxiLite4Config,
   val routeDataInput = io.inputs(dataRouteBuffer.payload).writeData
   io.output.writeData.valid := dataRouteBuffer.valid && routeDataInput.valid
   io.output.writeData.payload := routeDataInput.payload
-  io.inputs.zipWithIndex.foreach{ case(input, idx) =>
+  io.inputs.zipWithIndex.foreach { case (input, idx) =>
     input.writeData.ready := dataRouteBuffer.valid && io.output.writeData.ready && dataRouteBuffer.payload === idx
   }
   dataRouteBuffer.ready := io.output.writeData.fire

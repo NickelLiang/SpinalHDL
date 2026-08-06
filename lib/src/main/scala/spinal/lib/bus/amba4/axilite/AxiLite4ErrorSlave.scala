@@ -3,20 +3,15 @@ package spinal.lib.bus.amba4.axilite
 import spinal.core._
 import spinal.lib.slave
 
-// Mirrors spinal.lib.bus.amba4.axi.Axi4ErrorSlave, without the id and the burst counter of AXI4.
-
 /**
   * Answers every write transaction with a DECERR response. Instantiated by
   * [[AxiLite4WriteOnlyDecoder]] to cover the address space left unmapped by its decodings.
   *
-  * One transaction is handled at a time, the response is registered so that it can never be
-  * combinatorially driven by the command.
-  *
-  * @param config Axi Lite configuration class
+  * @param axiConfig Axi Lite configuration class
   */
-case class AxiLite4WriteOnlyErrorSlave(config: AxiLite4Config) extends Component {
+case class AxiLite4WriteOnlyErrorSlave(axiConfig: AxiLite4Config) extends Component {
   val io = new Bundle {
-    val axi = slave(AxiLite4WriteOnly(config))
+    val axi = slave(AxiLite4WriteOnly(axiConfig))
   }
 
   val consumeData = RegInit(False)
@@ -44,11 +39,11 @@ case class AxiLite4WriteOnlyErrorSlave(config: AxiLite4Config) extends Component
   * Answers every read transaction with a DECERR response. Instantiated by
   * [[AxiLite4ReadOnlyDecoder]] to cover the address space left unmapped by its decodings.
   *
-  * @param config Axi Lite configuration class
+  * @param axiConfig Axi Lite configuration class
   */
-case class AxiLite4ReadOnlyErrorSlave(config: AxiLite4Config) extends Component {
+case class AxiLite4ReadOnlyErrorSlave(axiConfig: AxiLite4Config) extends Component {
   val io = new Bundle {
-    val axi = slave(AxiLite4ReadOnly(config))
+    val axi = slave(AxiLite4ReadOnly(axiConfig))
   }
 
   val sendRsp = RegInit(False)

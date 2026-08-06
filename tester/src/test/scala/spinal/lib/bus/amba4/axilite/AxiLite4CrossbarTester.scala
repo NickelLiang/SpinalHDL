@@ -14,10 +14,10 @@ import scala.util.Random
 /** Fully connected crossbar, with a hole in its address space so that the decoders instantiate
   * their error slave.
   */
-class AxiLite4CrossbarDut(val config: AxiLite4Config,
+class AxiLite4CrossbarDut(config: AxiLite4Config,
                           val mastersCount: Int,
-                          val mappings: Seq[SizeMapping],
-                          val lowLatency: Boolean) extends Component {
+                          mappings: Seq[SizeMapping],
+                          lowLatency: Boolean) extends Component {
   val masters = Vec(slave(AxiLite4(config)), mastersCount)
   val slaves = Vec(master(AxiLite4(config)), mappings.size)
 
@@ -42,7 +42,7 @@ class AxiLite4CrossbarOnSlaveFactoryDut(mastersCount: Int) extends Component {
   val registers = slaves.zipWithIndex.map { case (bus, slaveId) =>
     val factory = new AxiLite4SlaveFactory(bus)
     Seq.tabulate(mastersCount)(masterId =>
-      factory.createReadAndWrite(UInt(32 bits), slaveId * 0x80 + masterId * 4) init (0))
+      factory.createReadAndWrite(UInt(32 bits), slaveId * 0x80 + masterId * 4) init(0))
   }
 
   AxiLite4CrossbarFactory()
@@ -92,6 +92,14 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
 
   /** prot is derived from the address, so a slave can check it was not dropped on the way. */
   def protOf(address: BigInt): Int = ((address >> 2) % 8).toInt
+
+  def readWord(mem: mutable.HashMap[BigInt, Byte], address: BigInt): BigInt =
+    (0 until bytePerWord).foldLeft(BigInt(0)) { (acc, i) =>
+      acc | (BigInt(mem.getOrElseUpdate(address + i, initByte(address + i)) & 0xFF) << (8 * i))
+    }
+
+  def writeWord(mem: mutable.HashMap[BigInt, Byte], address: BigInt, data: BigInt, strb: BigInt): Unit =
+    for(i <- 0 until bytePerWord if strb.testBit(i)) mem(address + i) = ((data >> (8 * i)) & 0xFF).toByte
 
   test("crossbar_3m_3s") {
     SimConfig.compile(new AxiLite4CrossbarDut(config, 3, mappings, lowLatency = false))
@@ -147,7 +155,8 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
 
   test("crossbar_overlapping_mappings_are_rejected") {
     assertThrows[Throwable] {
-      SpinalVerilog(new AxiLite4CrossbarDut(config, 1, Seq(SizeMapping(0x000, 0x400), SizeMapping(0x200, 0x400)), lowLatency = false))
+      val overlapping = Seq(SizeMapping(0x000, 0x400), SizeMapping(0x200, 0x400))
+      SpinalVerilog(new AxiLite4CrossbarDut(config, 1, overlapping, lowLatency = false))
     }
   }
 
@@ -175,20 +184,13 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
     }
   }
 
-  /** Slave model backed by a byte addressed memory, with randomized ready signals. */
+  /** Slave model backed by a byte addressed memory. */
   class SlaveAgent(bus: AxiLite4, cd: ClockDomain, base: BigInt, mem: mutable.HashMap[BigInt, Byte]) {
-    def read(address: BigInt): BigInt =
-      (0 until bytePerWord).foldLeft(BigInt(0)) { (acc, i) =>
-        acc | (BigInt(mem.getOrElseUpdate(address + i, initByte(address + i)) & 0xFF) << (8 * i))
-      }
-
-    def write(address: BigInt, data: BigInt, strb: BigInt): Unit =
-      for(i <- 0 until bytePerWord if strb.testBit(i)) mem(address + i) = ((data >> (8 * i)) & 0xFF).toByte
-
     def checkAddress(address: BigInt, prot: Int, kind: String): Unit = {
       assert(address >= base && address < base + regionSize,
         f"the slave mapped at $base%#x got a $kind at $address%#x, outside of its mapping")
-      assert(prot == protOf(address), f"$kind prot altered on the way to $address%#x: $prot instead of ${protOf(address)}")
+      assert(prot == protOf(address),
+        f"$kind prot altered on the way to $address%#x: $prot instead of ${protOf(address)}")
     }
 
     val arQueue = mutable.Queue[BigInt]()
@@ -202,7 +204,7 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
     }
     StreamDriver(bus.r, cd) { r =>
       if(arQueue.nonEmpty) {
-        r.data #= read(arQueue.dequeue())
+        r.data #= readWord(mem, arQueue.dequeue())
         r.resp #= 0
         true
       } else false
@@ -218,23 +220,16 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
     StreamDriver(bus.b, cd) { b =>
       if(awQueue.nonEmpty && wQueue.nonEmpty) {
         val (data, strb) = wQueue.dequeue()
-        write(awQueue.dequeue(), data, strb)
+        writeWord(mem, awQueue.dequeue(), data, strb)
         b.resp #= 0
         true
       } else false
     }
   }
 
-  /**
-    * Master model issuing reads and writes without waiting for the previous response, so that the
-    * route buffers of the arbiters and the outstanding logic of the decoders are exercised. The
-    * stock [[spinal.lib.bus.amba4.axilite.sim.AxiLite4Master]] cannot be used here: it allows a
-    * single outstanding transaction per direction.
-    *
-    * Every master owns a disjoint set of words, which makes the expected read data unambiguous
-    * while still making all the masters compete for the same slaves. Because responses of an
-    * AXI4-Lite master have to come back in order, checking them against a queue also checks the
-    * ordering.
+  /** Master model keeping several transactions in flight, which the stock AxiLite4Master cannot do.
+    * Each master owns a disjoint set of words, so a response delivered to the wrong master shows up
+    * as a read mismatch, and checking the responses against a queue also checks their ordering.
     */
   class MasterAgent(bus: AxiLite4, cd: ClockDomain, val id: Int, mastersCount: Int, slavesCount: Int) {
     val refMem = mutable.HashMap[BigInt, Byte]()
@@ -254,11 +249,6 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
     var target = 0
 
     def done: Boolean = issued == target && rExpect.isEmpty && bExpect.isEmpty
-
-    def refRead(address: BigInt): BigInt =
-      (0 until bytePerWord).foldLeft(BigInt(0)) { (acc, i) =>
-        acc | (BigInt(refMem.getOrElseUpdate(address + i, initByte(address + i)) & 0xFF) << (8 * i))
-      }
 
     /** An address owned by this master: word indexes are interleaved between the masters. */
     def ownedAddress(): BigInt = {
@@ -281,15 +271,13 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
             if(decodeError) decErrCount += 1 else inFlight += address
             val resp = if(decodeError) 3 else 0
             if(Random.nextBoolean()) {
-              rExpect += ((address, if(decodeError) None else Some(refRead(address)), resp))
+              rExpect += ((address, if(decodeError) None else Some(readWord(refMem, address)), resp))
               arQueue += address
             } else {
               val data = BigInt(config.dataWidth, Random)
               val strb = BigInt(bytePerWord, Random)
               if(!decodeError) {
-                for(i <- 0 until bytePerWord if strb.testBit(i)) {
-                  refMem(address + i) = ((data >> (8 * i)) & 0xFF).toByte
-                }
+                writeWord(refMem, address, data, strb)
               }
               bExpect += ((address, resp))
               awQueue += address
