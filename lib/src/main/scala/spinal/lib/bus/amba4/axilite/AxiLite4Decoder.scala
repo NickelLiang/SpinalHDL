@@ -11,7 +11,8 @@ import spinal.lib.bus.misc.SizeMapping
   *
   * AXI4-Lite has no transaction ID, so responses of a given master have to come back in the order
   * the commands were issued. This is enforced by only allowing several outstanding commands when
-  * they all target the same slave.
+  * they all target the same slave. The destination used on the response path is registered, so a
+  * slave must not respond in the same cycle the command is accepted.
   *
   * @param axiConfig  Axi Lite configuration class
   * @param decodings  address range of each output, must not overlap
@@ -75,7 +76,8 @@ case class AxiLite4ReadOnlyDecoder(axiConfig: AxiLite4Config,
   *
   * The w channel follows the routing decision taken on aw, so write data is never interleaved
   * between two slaves. As for reads, several outstanding commands are only allowed when they all
-  * target the same slave, which keeps the b responses in order.
+  * target the same slave, which keeps the b responses in order, and a slave must not respond in
+  * the same cycle the command is accepted.
   *
   * @param axiConfig  Axi Lite configuration class
   * @param decodings  address range of each output, must not overlap

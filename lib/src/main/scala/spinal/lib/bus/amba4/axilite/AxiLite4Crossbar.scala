@@ -18,7 +18,7 @@ case class AxiLite4CrossbarSlaveConfig(mapping: SizeMapping){
   * Build an AXI4-Lite interconnect out of one [[AxiLite4ReadOnlyDecoder]] /
   * [[AxiLite4WriteOnlyDecoder]] per master and one [[AxiLite4ReadOnlyArbiter]] /
   * [[AxiLite4WriteOnlyArbiter]] per slave. Slaves reached by a single master are wired directly,
-  * without any arbiter.
+  * without any arbiter; `addPipelining` on that slave is still applied.
   *
   * The API mirrors `spinal.lib.bus.amba4.axi.Axi4CrossbarFactory`, so an AXI4 interconnect can be
   * turned into an AXI4-Lite one without rewriting its description. Addresses are not translated:
@@ -30,7 +30,9 @@ case class AxiLite4CrossbarSlaveConfig(mapping: SizeMapping){
   *  - `routeBufferSize` (4) is lower than `pendingMax` (7), so by default the arbiters bound the
   *    outstanding transactions before the decoders do;
   *  - the response path is fully combinatorial. `lowLatency` and `arValidPipe`/`awValidPipe` only
-  *    cut the command path, `addPipelining` is the way to register the responses too.
+  *    cut the command path, `addPipelining` is the way to register the responses too. The decoder
+  *    records the destination one cycle after the command is accepted, so a slave must not respond
+  *    in that same cycle.
   *
   * @example {{{
   *   AxiLite4CrossbarFactory()
@@ -188,12 +190,21 @@ case class AxiLite4CrossbarFactory(){
       }
     }
 
+    def plugRead(from: AxiLite4ReadOnly, to: AxiLite4ReadOnly): Unit = {
+      readOnlyBridger.getOrElse[(AxiLite4ReadOnly, AxiLite4ReadOnly) => Unit](to, _ >> _).apply(from, to)
+      readOnlyBridger.remove(to)
+    }
+    def plugWrite(from: AxiLite4WriteOnly, to: AxiLite4WriteOnly): Unit = {
+      writeOnlyBridger.getOrElse[(AxiLite4WriteOnly, AxiLite4WriteOnly) => Unit](to, _ >> _).apply(from, to)
+      writeOnlyBridger.remove(to)
+    }
+
     val arbiters = for((slave, config) <- slavesConfigs.toSeq.sortBy(_._1.asInstanceOf[Bundle].getInstanceCounter)) yield slave match {
       case slave: AxiLite4ReadOnly => new Area{
         val readConnections = config.connections
         readConnections.size match {
           case 0 => PendingError(s"$slave has no master")
-          case 1 => slave << masterToDecodedSlave(readConnections.head.master)(slave).asInstanceOf[AxiLite4ReadOnly]
+          case 1 => plugRead(masterToDecodedSlave(readConnections.head.master)(slave).asInstanceOf[AxiLite4ReadOnly], slave)
           case _ => new Area {
             val arbiter = AxiLite4ReadOnlyArbiter(
               outputConfig = slave.config,
@@ -204,8 +215,7 @@ case class AxiLite4CrossbarFactory(){
             for ((input, master) <- (arbiter.io.inputs, readConnections).zipped) {
               input << masterToDecodedSlave(master.master)(slave).asInstanceOf[AxiLite4ReadOnly]
             }
-            readOnlyBridger.getOrElse[(AxiLite4ReadOnly, AxiLite4ReadOnly) => Unit](slave, _ >> _).apply(arbiter.io.output, slave)
-            readOnlyBridger.remove(slave)
+            plugRead(arbiter.io.output, slave)
           }
         }
       }
@@ -213,7 +223,7 @@ case class AxiLite4CrossbarFactory(){
         val writeConnections = config.connections
         writeConnections.size match {
           case 0 => PendingError(s"$slave has no master")
-          case 1 => slave << masterToDecodedSlave(writeConnections.head.master)(slave).asInstanceOf[AxiLite4WriteOnly]
+          case 1 => plugWrite(masterToDecodedSlave(writeConnections.head.master)(slave).asInstanceOf[AxiLite4WriteOnly], slave)
           case _ => new Area {
             val arbiter = AxiLite4WriteOnlyArbiter(
               outputConfig = slave.config,
@@ -224,8 +234,7 @@ case class AxiLite4CrossbarFactory(){
             for ((input, master) <- (arbiter.io.inputs, writeConnections).zipped) {
               input << masterToDecodedSlave(master.master)(slave).asInstanceOf[AxiLite4WriteOnly]
             }
-            writeOnlyBridger.getOrElse[(AxiLite4WriteOnly, AxiLite4WriteOnly) => Unit](slave, _ >> _).apply(arbiter.io.output, slave)
-            writeOnlyBridger.remove(slave)
+            plugWrite(arbiter.io.output, slave)
           }
         }
       }

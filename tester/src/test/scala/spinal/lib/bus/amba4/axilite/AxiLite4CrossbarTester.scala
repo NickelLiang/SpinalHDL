@@ -9,7 +9,6 @@ import spinal.lib.sim.{StreamDriver, StreamMonitor, StreamReadyRandomizer}
 import spinal.tester.SpinalAnyFunSuite
 
 import scala.collection.mutable
-import scala.util.Random
 
 /** Fully connected crossbar, with a hole in its address space so that the decoders instantiate
   * their error slave.
@@ -72,7 +71,7 @@ class AxiLite4CrossbarShapesDut extends Component {
     .addConnections(
       iBus -> List(ram, rom),
       dBus -> List(ram, peripherals, rom),
-      dmaBus -> List(peripherals) // single master slave, wired without any arbiter
+      dmaBus -> List(peripherals)
     )
     .addPipelining(dBus) { _ >> _ } { _ >> _ }
     .build()
@@ -141,6 +140,22 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
 
   test("crossbar_shapes_generation") {
     SpinalVerilog(new AxiLite4CrossbarShapesDut)
+  }
+
+  test("crossbar_single_master_slave_pipelining_is_applied") {
+    var readApplied = false
+    var writeApplied = false
+    SpinalVerilog(new Component {
+      val busConfig = AxiLite4Config(addressWidth = 8, dataWidth = 32)
+      val m = slave(AxiLite4(busConfig))
+      val s = master(AxiLite4(busConfig))
+      AxiLite4CrossbarFactory()
+        .addSlaves(s -> SizeMapping(0x00, 0x100))
+        .addConnections(m -> List(s))
+        .addPipelining(s) { (from, to) => readApplied = true; from >> to } { (from, to) => writeApplied = true; from >> to }
+        .build()
+    })
+    assert(readApplied && writeApplied)
   }
 
   test("crossbar_config_mismatch_is_rejected") {
@@ -252,30 +267,30 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
 
     /** An address owned by this master: word indexes are interleaved between the masters. */
     def ownedAddress(): BigInt = {
-      val slave = Random.nextInt(slavesCount)
-      val word = Random.nextInt(regionSize / bytePerWord / mastersCount) * mastersCount + id
+      val slave = simRandom.nextInt(slavesCount)
+      val word = simRandom.nextInt(regionSize / bytePerWord / mastersCount) * mastersCount + id
       mappings(slave).base + word * bytePerWord
     }
 
-    def holeAddress(): BigInt = holeBase + Random.nextInt(regionSize / bytePerWord) * bytePerWord
+    def holeAddress(): BigInt = holeBase + simRandom.nextInt(regionSize / bytePerWord) * bytePerWord
 
     def start(transactions: Int): Unit = {
       target = transactions
       fork {
         while(issued < target) {
-          val decodeError = Random.nextInt(10) == 0
+          val decodeError = simRandom.nextInt(10) == 0
           val address = if(decodeError) holeAddress() else ownedAddress()
           // The read and the write path of the crossbar are independent, so a read and a write of
           // the same address must not be in flight at the same time: their order is not defined.
           if(decodeError || !inFlight.contains(address)) {
             if(decodeError) decErrCount += 1 else inFlight += address
             val resp = if(decodeError) 3 else 0
-            if(Random.nextBoolean()) {
+            if(simRandom.nextBoolean()) {
               rExpect += ((address, if(decodeError) None else Some(readWord(refMem, address)), resp))
               arQueue += address
             } else {
-              val data = BigInt(config.dataWidth, Random)
-              val strb = BigInt(bytePerWord, Random)
+              val data = BigInt(config.dataWidth, simRandom)
+              val strb = BigInt(bytePerWord, simRandom)
               if(!decodeError) {
                 writeWord(refMem, address, data, strb)
               }
@@ -285,13 +300,13 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
             }
             issued += 1
           }
-          cd.waitSampling(Random.nextInt(3))
+          cd.waitSampling(simRandom.nextInt(3))
         }
       }
     }
 
     StreamDriver(bus.ar, cd) { ar =>
-      if(arQueue.nonEmpty && Random.nextInt(4) != 0) {
+      if(arQueue.nonEmpty && simRandom.nextInt(4) != 0) {
         val address = arQueue.dequeue()
         ar.addr #= address
         ar.prot #= protOf(address)
@@ -311,7 +326,7 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
 
     // aw and w are driven from independent queues, so that w regularly leads aw
     StreamDriver(bus.aw, cd) { aw =>
-      if(awQueue.nonEmpty && Random.nextInt(4) != 0) {
+      if(awQueue.nonEmpty && simRandom.nextInt(4) != 0) {
         val address = awQueue.dequeue()
         aw.addr #= address
         aw.prot #= protOf(address)
@@ -319,7 +334,7 @@ class AxiLite4CrossbarTester extends SpinalAnyFunSuite {
       } else false
     }
     StreamDriver(bus.w, cd) { w =>
-      if(wQueue.nonEmpty && Random.nextInt(4) != 0) {
+      if(wQueue.nonEmpty && simRandom.nextInt(4) != 0) {
         val (data, strb) = wQueue.dequeue()
         w.data #= data
         w.strb #= strb
